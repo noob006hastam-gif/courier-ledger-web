@@ -1,92 +1,136 @@
-import { useEffect, useState } from 'react'
-import { supabase } from './supabase'
-import Dashboard from './Dashboard'
-import './App.css'
+import { useEffect, useState } from 'react';
+import { configured, supabase } from './supabase';
+import Dashboard from './Dashboard';
 
 export default function App() {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [user, setUser] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState('')
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [register, setRegister] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
 
   useEffect(() => {
+    if (!configured || !supabase) {
+      setLoading(false);
+      return;
+    }
+
+    let alive = true;
+
     supabase.auth.getSession().then(({ data, error }) => {
-      if (error) setMessage(error.message)
-      setUser(data?.session?.user ?? null)
-      setLoading(false)
-    })
+      if (!alive) return;
+      if (error) setMessage(error.message);
+      setSession(data?.session ?? null);
+      setLoading(false);
+    });
 
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-      setLoading(false)
-    })
+    const { data } = supabase.auth.onAuthStateChange(
+      (_event, nextSession) => {
+        setSession(nextSession);
+      }
+    );
 
-    return () => data.subscription.unsubscribe()
-  }, [])
+    return () => {
+      alive = false;
+      data.subscription.unsubscribe();
+    };
+  }, []);
 
-  async function signIn(event) {
-    event.preventDefault()
-    setBusy(true)
-    setMessage('')
+  async function submit(event) {
+    event.preventDefault();
+    if (!supabase || busy) return;
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    setBusy(true);
+    setMessage('');
 
-    if (error) setMessage(error.message)
-    setBusy(false)
-  }
+    try {
+      const result = register
+        ? await supabase.auth.signUp({ email: email.trim(), password })
+        : await supabase.auth.signInWithPassword({
+            email: email.trim(),
+            password
+          });
 
-  async function signUp() {
-    if (!email || password.length < 6) {
-      setMessage('ایمیل معتبر و رمز عبور حداقل ۶ کاراکتری وارد کن.')
-      return
+      if (result.error) throw result.error;
+
+      if (
+        register &&
+        result.data.user &&
+        !result.data.session
+      ) {
+        setMessage(
+          'حساب ساخته شد. ایمیلت رو برای تأیید حساب بررسی کن.'
+        );
+      } else {
+        setMessage('عملیات با موفقیت انجام شد.');
+      }
+    } catch (error) {
+      setMessage(error.message || 'خطایی رخ داد.');
+    } finally {
+      setBusy(false);
     }
-
-    setBusy(true)
-    setMessage('')
-
-    const { data, error } = await supabase.auth.signUp({ email, password })
-
-    if (error) {
-      setMessage(error.message)
-    } else if (data.session) {
-      setMessage('حساب ساخته شد.')
-    } else {
-      setMessage('ثبت‌نام انجام شد؛ اگر تأیید ایمیل فعال است، ایمیلت را بررسی کن.')
-    }
-
-    setBusy(false)
-  }
-
-  async function signOut() {
-    const { error } = await supabase.auth.signOut()
-    if (error) setMessage(error.message)
   }
 
   if (loading) {
-    return <main className="page"><section className="card">در حال بررسی ورود...</section></main>
+    return (
+      <main className="app-shell">
+        <div className="auth-card">
+          <div className="loading-dot" />
+          <p>در حال بررسی حساب...</p>
+        </div>
+      </main>
+    );
   }
 
-  if (user) {
-    return <Dashboard user={user} onSignOut={signOut} />
+  if (!configured) {
+    return (
+      <main className="app-shell">
+        <section className="auth-card">
+          <div className="brand-mark">CL</div>
+          <h1>Courier Ledger</h1>
+          <p>تنظیمات اتصال به Supabase کامل نیست.</p>
+          <p className="muted">
+            متغیرهای VITE_SUPABASE_URL و
+            VITE_SUPABASE_ANON_KEY رو در تنظیمات محیطی
+            پروژهٔ Cloudflare Pages وارد کن.
+          </p>
+        </section>
+      </main>
+    );
+  }
+
+  if (session?.user) {
+    return (
+      <Dashboard
+        user={session.user}
+        onSignOut={async () => {
+          const { error } = await supabase.auth.signOut();
+          if (error) setMessage(error.message);
+        }}
+      />
+    );
   }
 
   return (
-    <main className="page">
-      <section className="card">
-        <div className="logo">CL</div>
-        <h1>Courier Ledger</h1>
-        <p className="subtitle">مدیریت سفارش‌ها و تسویهٔ پیک موتوری</p>
+    <main className="app-shell">
+      <section className="auth-card">
+        <div className="brand-mark">CL</div>
+        <p className="eyebrow">COURIER WORKSPACE</p>
+        <h1>دفتر حساب پیک</h1>
+        <p className="muted">
+          سفارش‌ها، تسویه‌ها و هزینه‌های موتورت رو یک‌جا مدیریت کن.
+        </p>
 
-        <form onSubmit={signIn}>
+        <form onSubmit={submit} className="auth-form">
           <label htmlFor="email">ایمیل</label>
           <input
             id="email"
             type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
             required
           />
 
@@ -94,30 +138,37 @@ export default function App() {
           <input
             id="password"
             type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
+            autoComplete={register ? 'new-password' : 'current-password'}
             minLength={6}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
             required
           />
 
-          <button type="submit" disabled={busy}>
-            {busy ? 'لطفاً صبر کن...' : 'ورود'}
-          </button>
-
-          <button
-            type="button"
-            className="secondary"
-            disabled={busy}
-            onClick={signUp}
-          >
-            ساخت حساب جدید
+          <button className="primary-button" disabled={busy}>
+            {busy
+              ? 'لطفاً صبر کن...'
+              : register
+                ? 'ساخت حساب'
+                : 'ورود به حساب'}
           </button>
         </form>
 
-        {message && <div className="message">{message}</div>}
-        <footer>اطلاعات سفارش‌ها در پایگاه دادهٔ آنلاین ذخیره می‌شوند.</footer>
+        {message && <p className="notice" role="status">{message}</p>}
+
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => {
+            setRegister(!register);
+            setMessage('');
+          }}
+        >
+          {register
+            ? 'حساب داری؟ وارد شو'
+            : 'حساب نداری؟ ثبت‌نام کن'}
+        </button>
       </section>
     </main>
-  )
+  );
 }

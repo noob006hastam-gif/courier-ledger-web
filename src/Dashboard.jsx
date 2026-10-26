@@ -660,4 +660,523 @@ export default function Dashboard({ user, onSignOut }) {
                       type="number" min="0" step="1"
                       value={orderForm.fare}
                       onChange={(e) => setOrderForm({
-                        ...orderFo
+                        ...orderForm, fare: e.target.value
+                      })}
+                      required
+                    />
+                  </Field>
+                  <Field label="مبلغ فاکتور مغازه">
+                    <input
+                      type="number" min="0" step="1"
+                      value={orderForm.invoice_amount}
+                      onChange={(e) => setOrderForm({
+                        ...orderForm, invoice_amount: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="دریافتی نقدی">
+                    <input
+                      type="number" min="0" step="1"
+                      value={orderForm.cash_received}
+                      onChange={(e) => setOrderForm({
+                        ...orderForm, cash_received: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="کارت‌به‌کارت">
+                    <input
+                      type="number" min="0" step="1"
+                      value={orderForm.card_transfer}
+                      onChange={(e) => setOrderForm({
+                        ...orderForm, card_transfer: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="پوز دفتر">
+                    <input
+                      type="number" min="0" step="1"
+                      value={orderForm.office_pos}
+                      onChange={(e) => setOrderForm({
+                        ...orderForm, office_pos: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="خرید شخصی">
+                    <input
+                      type="number" min="0" step="1"
+                      value={orderForm.personal_purchase}
+                      onChange={(e) => setOrderForm({
+                        ...orderForm, personal_purchase: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="پول خرد پرداختی به مشتری">
+                    <input
+                      type="number" min="0" step="1"
+                      value={orderForm.customer_change}
+                      onChange={(e) => setOrderForm({
+                        ...orderForm, customer_change: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="هزینهٔ دیگر">
+                    <input
+                      type="number" min="0" step="1"
+                      value={orderForm.other_expense}
+                      onChange={(e) => setOrderForm({
+                        ...orderForm, other_expense: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="وضعیت">
+                    <select
+                      value={orderForm.status}
+                      onChange={(e) => setOrderForm({
+                        ...orderForm, status: e.target.value
+                      })}
+                    >
+                      <option value="pending">در انتظار تسویه</option>
+                      <option value="settled">تسویه‌شده</option>
+                      <option value="cancelled">لغوشده</option>
+                    </select>
+                  </Field>
+                  <Field label="یادداشت">
+                    <input
+                      value={orderForm.notes}
+                      onChange={(e) => setOrderForm({
+                        ...orderForm, notes: e.target.value
+                      })}
+                    />
+                  </Field>
+                </div>
+
+                <p className="muted footnote">
+                  مبالغ دریافتی رو دقیقاً مطابق روش پرداخت وارد کن.
+                  پوز دفتر ممکنه شامل فاکتور و کرایه باهم باشه؛
+                  پس از این فیلد به‌تنهایی درآمد کرایه محاسبه نمی‌شه.
+                </p>
+
+                <button className="primary-button" disabled={busy}>
+                  {busy ? 'در حال ذخیره...' : 'ذخیرهٔ سفارش'}
+                </button>
+              </form>
+            )}
+
+            <section className="panel">
+              <div className="section-heading">
+                <h2>فهرست سفارش‌ها</h2>
+                <span className="muted">{money(filteredOrders.length)} مورد</span>
+              </div>
+              <OrderTable
+                orders={filteredOrders}
+                onEdit={startEditOrder}
+                onDelete={deleteOrder}
+              />
+            </section>
+          </>
+        )}
+
+        {!loading && tab === 'motorcycle' && (
+          <>
+            <div className="stats-grid">
+              <Stat
+                label="هزینهٔ موتور در بازه"
+                value={money(stats.motorcycleCosts)}
+                featured
+              />
+              <Stat
+                label="آخرین کیلومتر ثبت‌شده"
+                value={latestOdometer ? `${money(latestOdometer)} km` : 'ثبت نشده'}
+              />
+              <Stat
+                label="سرویس بعدی"
+                value={upcomingService
+                  ? `${money(upcomingService.next_service_km)} km`
+                  : 'ثبت نشده'}
+              />
+            </div>
+
+            {upcomingService && latestOdometer > 0 && (
+              <div className="alert">
+                {latestOdometer >= Number(upcomingService.next_service_km)
+                  ? 'کیلومتر سرویس ثبت‌شده رسیده یا از آن گذشته است.'
+                  : `تا کیلومتر سرویس ثبت‌شده حدود ${money(
+                      Number(upcomingService.next_service_km) - latestOdometer
+                    )} کیلومتر باقی مانده است.`}
+              </div>
+            )}
+
+            <div className="toolbar panel">
+              <button
+                className="primary-button"
+                onClick={() => {
+                  resetExpenseForm();
+                  setShowExpenseForm(!showExpenseForm);
+                }}
+              >
+                + ثبت هزینهٔ موتور
+              </button>
+              <button className="ghost-button" onClick={exportExpenses}>
+                خروجی CSV
+              </button>
+            </div>
+
+            {showExpenseForm && (
+              <form className="panel data-form" onSubmit={saveExpense}>
+                <div className="section-heading">
+                  <h2>{editingExpense ? 'ویرایش هزینه' : 'هزینهٔ جدید'}</h2>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={resetExpenseForm}
+                  >
+                    بستن
+                  </button>
+                </div>
+
+                <div className="form-grid">
+                  <Field label="تاریخ">
+                    <input
+                      type="date"
+                      value={expenseForm.expense_date}
+                      onChange={(e) => setExpenseForm({
+                        ...expenseForm, expense_date: e.target.value
+                      })}
+                      required
+                    />
+                  </Field>
+                  <Field label="دسته‌بندی">
+                    <select
+                      value={expenseForm.category}
+                      onChange={(e) => setExpenseForm({
+                        ...expenseForm, category: e.target.value
+                      })}
+                    >
+                      {Object.entries(expenseCategories).map(([key, label]) => (
+                        <option key={key} value={key}>{label}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="مبلغ">
+                    <input
+                      type="number" min="0" step="1"
+                      value={expenseForm.amount}
+                      onChange={(e) => setExpenseForm({
+                        ...expenseForm, amount: e.target.value
+                      })}
+                      required
+                    />
+                  </Field>
+                  <Field label="کیلومتر فعلی (اختیاری)">
+                    <input
+                      type"number" min="0" step="1"
+                      value={expenseForm.amount}
+                      onChange={(e) => setExpenseForm({
+                        ...expenseForm, amount: e.target.value
+                      })}
+                      required
+                    />
+                  </Field>
+                  <Field label="کیلومتر فعلی (اختیاری)">
+                    <input
+                      type="number" min="0"
+                      value={expenseForm.odometer_km}
+                      onChange={(e) => setExpenseForm({
+                        ...expenseForm, odometer_km: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="کیلومتر سرویس بعدی (اختیاری)">
+                    <input
+                      type="number" min="0"
+                      value={expenseForm.next_service_km}
+                      onChange={(e) => setExpenseForm({
+                        ...expenseForm, next_service_km: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="شرح هزینه">
+                    <input
+                      value={expenseForm.description}
+                      onChange={(e) => setExpenseForm({
+                        ...expenseForm, description: e.target.value
+                      })}
+                      placeholder="مثلاً روغن موتور"
+                    />
+                  </Field>
+                </div>
+
+                <button className="primary-button" disabled={busy}>
+                  {busy ? 'در حال ذخیره...' : 'ذخیرهٔ هزینه'}
+                </button>
+              </form>
+            )}
+
+            <section className="panel">
+              <h2>سوابق هزینهٔ موتور</h2>
+              {expenses.length === 0 ? (
+                <Empty text="هنوز هزینه‌ای ثبت نشده." />
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>تاریخ</th><th>دسته</th><th>مبلغ</th>
+                        <th>کیلومتر</th><th>شرح</th><th>عملیات</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {expenses.map((expense) => (
+                        <tr key={expense.id}>
+                          <td>{expense.expense_date}</td>
+                          <td>{expenseCategories[expense.category] || expense.category}</td>
+                          <td>{money(expense.amount)}</td>
+                          <td>{expense.odometer_km == null
+                            ? '—' : money(expense.odometer_km)}</td>
+                          <td>{expense.description || '—'}</td>
+                          <td>
+                            <div className="row-actions">
+                              <button className="text-button" onClick={() => startEditExpense(expense)}>ویرایش</button>
+                              <button className="text-button danger-text" onClick={() => deleteExpense(expense)}>حذف</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </>
+        )}
+
+        {!loading && tab === 'settlements' && (
+          <>
+            <div className="toolbar panel">
+              <button
+                className="primary-button"
+                onClick={() => setShowSettlementForm(!showSettlementForm)}
+              >
+                + ثبت تسویه
+              </button>
+            </div>
+
+            {showSettlementForm && (
+              <form className="panel data-form" onSubmit={saveSettlement}>
+                <h2>ثبت تسویه با دفتر</h2>
+                <div className="form-grid">
+                  <Field label="شروع دوره">
+                    <input
+                      type="date" required
+                      value={settlementForm.period_start}
+                      onChange={(e) => setSettlementForm({
+                        ...settlementForm, period_start: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="پایان دوره">
+                    <input
+                      type="date" required
+                      value={settlementForm.period_end}
+                      onChange={(e) => setSettlementForm({
+                        ...settlementForm, period_end: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="واریزی دفتر به تو">
+                    <input
+                      type="number" min="0" required
+                      value={settlementForm.office_transfer_received}
+                      onChange={(e) => setSettlementForm({
+                        ...settlementForm,
+                        office_transfer_received: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="پول نقد تحویل‌داده‌شده به دفتر">
+                    <input
+                      type="number" min="0" required
+                      value={settlementForm.cash_handed_over}
+                      onChange={(e) => setSettlementForm({
+                        ...settlementForm, cash_handed_over: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="کمیسیون پرداخت‌شده">
+                    <input
+                      type="number" min="0" required
+                      value={settlementForm.commission_paid}
+                      onChange={(e) => setSettlementForm({
+                        ...settlementForm, commission_paid: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="یادداشت">
+                    <input
+                      value={settlementForm.notes}
+                      onChange={(e) => setSettlementForm({
+                        ...settlementForm, notes: e.target.value
+                      })}
+                    />
+                  </Field>
+                </div>
+                <button className="primary-button" disabled={busy}>
+                  ثبت تسویه
+                </button>
+              </form>
+            )}
+
+            <section className="panel">
+              <h2>تاریخچهٔ تسویه‌ها</h2>
+              {settlements.length === 0 ? (
+                <Empty text="هنوز تسویه‌ای ثبت نشده." />
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>شروع</th><th>پایان</th><th>واریزی دفتر</th>
+                        <th>نقد تحویلی</th><th>کمیسیون پرداختی</th><th>یادداشت</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {settlements.map((item) => (
+                        <tr key={item.id}>
+                          <td>{item.period_start}</td>
+                          <td>{item.period_end}</td>
+                          <td>{money(item.office_transfer_received)}</td>
+                          <td>{money(item.cash_handed_over)}</td>
+                          <td>{money(item.commission_paid)}</td>
+                          <td>{item.notes || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p className="muted footnote">
+                مبلغ تسویهٔ دفتر از روی پوز و فاکتور به‌طور خودکار حدس زده نمی‌شه؛
+                ارقام واقعی تسویه رو وارد کن.
+              </p>
+            </section>
+          </>
+        )}
+
+        {!loading && tab === 'reports' && (
+          <>
+            <section className="panel">
+              <h2>گزارش بازهٔ انتخاب‌شده</h2>
+              <p className="muted">{fromDate || 'ابتدا'} تا {toDate || 'امروز'}</p>
+              <div className="stats-grid">
+                <Stat label="فاکتورها" value={money(stats.invoices)} />
+                <Stat label="کرایه" value={money(stats.fare)} featured />
+                <Stat label="کمیسیون تخمینی" value={money(stats.commission)} />
+                <Stat label="هزینهٔ موتور" value={money(stats.motorcycleCosts)} />
+                <Stat label="خالص تخمینی" value={money(stats.estimatedNet)} featured />
+              </div>
+              <div className="toolbar">
+                <button className="primary-button" onClick={exportOrders}>
+                  دریافت سفارش‌ها CSV
+                </button>
+                <button className="ghost-button" onClick={exportExpenses}>
+                  دریافت هزینه‌ها CSV
+                </button>
+              </div>
+            </section>
+
+            <section className="panel">
+              <h2>تفکیک هزینه‌های موتور</h2>
+              {Object.entries(expenseCategories).map(([key, label]) => {
+                const total = periodExpenses
+                  .filter((expense) => expense.category === key)
+                  .reduce((sum, expense) => sum + number(expense.amount), 0);
+
+                return (
+                  <div className="report-line" key={key}>
+                    <span>{label}</span>
+                    <strong>{money(total)}</strong>
+                  </div>
+                );
+              })}
+            </section>
+          </>
+        )}
+      </section>
+
+      <footer className="app-footer">
+        Courier Ledger · اطلاعات حساب شخصی تو
+      </footer>
+    </main>
+  );
+}
+
+function Stat({ label, value, featured = false }) {
+  return (
+    <article className={`stat-card ${featured ? 'featured' : ''}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>واحد پول ثبت‌شده</small>
+    </article>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Empty({ text }) {
+  return <div className="empty-state">{text}</div>;
+}
+
+function OrderTable({ orders, onEdit, onDelete }) {
+  if (!orders.length) {
+    return <Empty text="سفارشی در این بازه پیدا نشد." />;
+  }
+
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>شماره</th><th>تاریخ</th><th>کرایه</th>
+            <th>فاکتور</th><th>وضعیت</th><th>عملیات</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((order) => (
+            <tr key={order.id}>
+              <td>{order.order_number || '—'}</td>
+              <td>{order.order_date}</td>
+              <td>{money(order.fare)}</td>
+              <td>{money(order.invoice_amount)}</td>
+              <td>
+                <span className={`status status-${order.status}`}>
+                  {{
+                    pending: 'در انتظار',
+                    settled: 'تسویه‌شده',
+                    cancelled: 'لغوشده'
+                  }[order.status] || order.status}
+                </span>
+              </td>
+              <td>
+                <div className="row-actions">
+                  <button className="text-button" onClick={() => onEdit(order)}>
+                    ویرایش
+                  </button>
+                  <button className="text-button danger-text" onClick={() => onDelete(order)}>
+                    حذف
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

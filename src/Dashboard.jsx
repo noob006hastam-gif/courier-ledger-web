@@ -1,9 +1,15 @@
-import { useEffect, useState } from 'react'
-import { supabase } from './supabase'
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { supabase } from './supabase';
 
-const emptyOrder = {
+const money = (value) =>
+  new Intl.NumberFormat('fa-IR').format(Math.round(Number(value) || 0));
+
+const today = () => new Date().toISOString().slice(0, 10);
+const monthStart = () => `${today().slice(0, 7)}-01`;
+
+const emptyOrder = () => ({
   order_number: '',
-  order_date: new Date().toLocaleDateString('en-CA'),
+  order_date: today(),
   order_time: new Date().toTimeString().slice(0, 5),
   fare: '',
   invoice_amount: '',
@@ -13,109 +19,202 @@ const emptyOrder = {
   personal_purchase: '',
   customer_change: '',
   other_expense: '',
-  notes: '',
+  status: 'settled',
+  notes: ''
+});
+
+const expenseCategories = {
+  fuel: 'بنزین',
+  oil: 'روغن',
+  repair: 'تعمیرات',
+  parts: 'قطعات',
+  other: 'سایر'
+};
+
+const emptyExpense = () => ({
+  expense_date: today(),
+  category: 'fuel',
+  amount: '',
+  odometer_km: '',
+  next_service_km: '',
+  description: ''
+});
+
+const emptySettlement = () => ({
+  period_start: monthStart(),
+  period_end: today(),
+  office_transfer_received: '',
+  cash_handed_over: '',
+  commission_paid: '',
+  notes: ''
+});
+
+function number(value) {
+  return Math.max(0, Number(value) || 0);
 }
 
-const money = (value) =>
-  new Intl.NumberFormat('fa-IR').format(Number(value || 0))
+function csvDownload(filename, rows) {
+  const csv = '\uFEFF' + rows.map((row) =>
+    row.map((value) => {
+      const text = String(value ?? '');
+      return `"${text.replace(/"/g, '""')}"`;
+    }).join(',')
+  ).join('\r\n');
+
+  const blob = new Blob([csv], {
+    type: 'text/csv;charset=utf-8;'
+  });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function Dashboard({ user, onSignOut }) {
-  const [orders, setOrders] = useState([])
-  const [form, setForm] = useState(emptyOrder)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
-  const [editingId, setEditingId] = useState(null)
-  const [search, setSearch] = useState('')
-  const [date, setDate] = useState('')
+  const [tab, setTab] = useState('overview');
+  const [orders, setOrders] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [settlements, setSettlements] = useState([]);
 
-  async function loadOrders() {
-    setLoading(true)
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
 
-    let query = supabase
-      .from('orders')
-      .select('*')
-      .order('order_date', { ascending: false })
-      .order('created_at', { ascending: false })
+  const [search, setSearch] = useState('');
+  const [fromDate, setFromDate] = useState(monthStart());
+  const [toDate, setToDate] = useState(today());
 
-    if (date) query = query.eq('order_date', date)
+  const [orderForm, setOrderForm] = useState(emptyOrder());
+  const [editingOrder, setEditingOrder] = useState(null);
+  const [showOrderForm, setShowOrderForm] = useState(false);
 
-    if (search.trim()) {
-      const term = search.trim().replace(/[,%()]/g, '')
-      if (term) query = query.ilike('order_number', `%${term}%`)
+  const [expenseForm, setExpenseForm] = useState(emptyExpense());
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [showExpenseForm, setShowExpenseForm] = useState(false);
+
+  const [settlementForm, setSettlementForm] = useState(emptySettlement());
+  const [showSettlementForm, setShowSettlementForm] = useState(false);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const [orderResult, expenseResult, settlementResult] =
+        await Promise.all([
+          supabase
+            .from('orders')
+            .select('*')
+            .order('order_date', { ascending: false })
+            .order('order_time', { ascending: false })
+            .limit(2000),
+
+          supabase
+            .from('motorcycle_expenses')
+            .select('*')
+            .order('expense_date', { ascending: false })
+            .limit(2000),
+
+          supabase
+            .from('settlements')
+            .select('*')
+            .order('period_end', { ascending: false })
+            .limit(500)
+        ]);
+
+      if (orderResult.error) throw orderResult.error;
+      if (expenseResult.error) throw expenseResult.error;
+      if (settlementResult.error) throw settlementResult.error;
+
+      setOrders(orderResult.data || []);
+      setExpenses(expenseResult.data || []);
+      setSettlements(settlementResult.data || []);
+    } catch (err) {
+      setError(
+        err.message ||
+        'بارگذاری اطلاعات ناموفق بود. اتصال و دسترسی دیتابیس رو بررسی کن.'
+      );
+    } finally {
+      setLoading(false);
     }
-
-    const { data, error } = await query
-
-    if (error) {
-      setMessage(`خطا در دریافت سفارش‌ها: ${error.message}`)
-    } else {
-      setOrders(data || [])
-      setMessage('')
-    }
-
-    setLoading(false)
-  }
+  }, []);
 
   useEffect(() => {
-    loadOrders()
-  }, [date, search])
+    loadData();
+  }, [loadData]);
 
-  function updateField(event) {
-    const { name, value } = event.target
-    setForm((previous) => ({ ...previous, [name]: value }))
+  const filteredOrders = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return orders.filter((order) => {
+      if (fromDate && order.order_date < fromDate) return false;
+      if (toDate && order.order_date > toDate) return false;
+
+      if (!query) return true;
+
+      return [
+        order.order_number,
+        order.notes,
+        order.status
+      ].some((value) =>
+        String(value ?? '').toLowerCase().includes(query)
+      );
+    });
+  }, [orders, search, fromDate, toDate]);
+
+  const periodExpenses = useMemo(() => {
+    return expenses.filter((expense) =>
+      (!fromDate || expense.expense_date >= fromDate) &&
+      (!toDate || expense.expense_date <= toDate)
+    );
+  }, [expenses, fromDate, toDate]);
+
+  const stats = useMemo(() => {
+    const active = filteredOrders.filter(
+      (order) => order.status !== 'cancelled'
+    );
+
+    const sum = (key) => active.reduce(
+      (total, order) => total + number(order[key]), 0
+    );
+
+    const fare = sum('fare');
+    const commission = fare * 0.2;
+    const motorcycleCosts = periodExpenses.reduce(
+      (total, expense) => total + number(expense.amount), 0
+    );
+
+    return {
+      count: active.length,
+      invoices: sum('invoice_amount'),
+      fare,
+      commission,
+      cash: sum('cash_received'),
+      card: sum('card_transfer'),
+      pos: sum('office_pos'),
+      personal: sum('personal_purchase'),
+      change: sum('customer_change'),
+      other: sum('other_expense'),
+      motorcycleCosts,
+      estimatedNet: fare - commission - motorcycleCosts
+    };
+  }, [filteredOrders, periodExpenses]);
+
+  function resetOrderForm() {
+    setOrderForm(emptyOrder());
+    setEditingOrder(null);
+    setShowOrderForm(false);
   }
 
-  function resetForm() {
-    setForm({
-      ...emptyOrder,
-      order_date: new Date().toLocaleDateString('en-CA'),
-      order_time: new Date().toTimeString().slice(0, 5),
-    })
-    setEditingId(null)
-  }
-
-  async function saveOrder(event) {
-    event.preventDefault()
-    setSaving(true)
-    setMessage('')
-
-    const payload = {
-      user_id: user.id,
-      order_number: form.order_number.trim(),
-      order_date: form.order_date,
-      order_time: form.order_time || null,
-      fare: Number(form.fare || 0),
-      invoice_amount: Number(form.invoice_amount || 0),
-      cash_received: Number(form.cash_received || 0),
-      card_transfer: Number(form.card_transfer || 0),
-      office_pos: Number(form.office_pos || 0),
-      personal_purchase: Number(form.personal_purchase || 0),
-      customer_change: Number(form.customer_change || 0),
-      other_expense: Number(form.other_expense || 0),
-      notes: form.notes.trim(),
-    }
-
-    const result = editingId
-      ? await supabase.from('orders').update(payload).eq('id', editingId)
-      : await supabase.from('orders').insert(payload)
-
-    if (result.error) {
-      setMessage(`خطا در ذخیره: ${result.error.message}`)
-    } else {
-      setMessage(editingId ? 'سفارش ویرایش شد.' : 'سفارش ذخیره شد.')
-      resetForm()
-      await loadOrders()
-    }
-
-    setSaving(false)
-  }
-
-  function editOrder(order) {
-    setForm({
-      order_number: order.order_number || '',
-      order_date: order.order_date || '',
-      order_time: order.order_time?.slice(0, 5) || '',
+  function startEditOrder(order) {
+    setEditingOrder(order.id);
+    setOrderForm({
+      ...emptyOrder(),
+      ...order,
       fare: String(order.fare ?? ''),
       invoice_amount: String(order.invoice_amount ?? ''),
       cash_received: String(order.cash_received ?? ''),
@@ -123,196 +222,442 @@ export default function Dashboard({ user, onSignOut }) {
       office_pos: String(order.office_pos ?? ''),
       personal_purchase: String(order.personal_purchase ?? ''),
       customer_change: String(order.customer_change ?? ''),
-      other_expense: String(order.other_expense ?? ''),
-      notes: order.notes || '',
-    })
-    setEditingId(order.id)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+      other_expense: String(order.other_expense ?? '')
+    });
+    setShowOrderForm(true);
+    setTab('orders');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  async function deleteOrder(order) {
-    if (!window.confirm(`سفارش ${order.order_number} حذف شود؟`)) return
+  async function saveOrder(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    setNotice('');
 
-    const { error } = await supabase
-      .from('orders')
-      .delete()
-      .eq('id', order.id)
+    try {
+      const payload = {
+        user_id: user.id,
+        order_number: orderForm.order_number.trim(),
+        order_date: orderForm.order_date,
+        order_time: orderForm.order_time || null,
+        fare: number(orderForm.fare),
+        invoice_amount: number(orderForm.invoice_amount),
+        cash_received: number(orderForm.cash_received),
+        card_transfer: number(orderForm.card_transfer),
+        office_pos: number(orderForm.office_pos),
+        personal_purchase: number(orderForm.personal_purchase),
+        customer_change: number(orderForm.customer_change),
+        other_expense: number(orderForm.other_expense),
+        status: orderForm.status,
+        notes: orderForm.notes.trim()
+      };
 
-    if (error) {
-      setMessage(`خطا درحذف: ${error.message}`)
-    } else {
-      setMessage('سفارش حذف شد.')
-      await loadOrders()
+      const result = editingOrder
+        ? await supabase
+            .from('orders')
+            .update(payload)
+            .eq('id', editingOrder)
+            .eq('user_id', user.id)
+        : await supabase.from('orders').insert(payload);
+
+      if (result.error) throw result.error;
+
+      setNotice(editingOrder ? 'سفارش ویرایش شد.' : 'سفارش ثبت شد.');
+      resetOrderForm();
+      await loadData();
+    } catch (err) {
+      setError(err.message || 'ذخیرهٔ سفارش انجام نشد.');
+    } finally {
+      setBusy(false);
     }
   }
 
-  const totalFare = orders.reduce((sum, order) => sum + Number(order.fare || 0), 0)
-  const totalCash = orders.reduce((sum, order) => sum + Number(order.cash_received || 0), 0)
-  const totalCard = orders.reduce((sum, order) => sum + Number(order.card_transfer || 0), 0)
-  const totalExpenses = orders.reduce(
-    (sum, order) =>
-      sum +
-      Number(order.personal_purchase || 0) +
-      Number(order.customer_change || 0) +
-      Number(order.other_expense || 0),
-    0,
-  )
+  async function deleteOrder(order) {
+    if (!window.confirm(
+      `سفارش ${order.order_number || 'بدون شماره'} حذف بشه؟`
+    )) return;
 
-  const fields = [
-    ['order_number', 'شماره سفارش', 'text', true],
-    ['order_date', 'تاریخ', 'date'],
-    ['order_time', 'ساعت', 'time'],
-    ['fare', 'کرایه پیک (تومان)', 'number'],
-    ['invoice_amount', 'فاکتور مغازه (تومان)', 'number'],
-    ['cash_received', 'وجه نقد دریافتی (تومان)', 'number'],
-    ['card_transfer', 'واریز مستقیم به پیک (تومان)', 'number'],
-    ['office_pos', 'پرداخت با کارت‌خوان دفتر (تومان)', 'number'],
-    ['personal_purchase', 'خرید شخصی بابت سفارش (تومان)', 'number'],
-    ['customer_change', 'پولی که به مشتری پس دادی (تومان)', 'number'],
-    ['other_expense', 'سایر هزینه‌های شخصی (تومان)', 'number'],
-  ]
+    setError('');
+    setNotice('');
+
+    const { error: deleteError } = await supabase
+      .from('orders')
+      .delete()
+      .eq('id', order.id)
+      .eq('user_id', user.id);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+
+    setNotice('سفارش حذف شد.');
+    await loadData();
+  }
+
+  function startEditExpense(expense) {
+    setEditingExpense(expense.id);
+    setExpenseForm({
+      ...emptyExpense(),
+      ...expense,
+      amount: String(expense.amount ?? ''),
+      odometer_km: String(expense.odometer_km ?? ''),
+      next_service_km: String(expense.next_service_km ?? '')
+    });
+    setShowExpenseForm(true);
+    setTab('motorcycle');
+  }
+
+  function resetExpenseForm() {
+    setExpenseForm(emptyExpense());
+    setEditingExpense(null);
+    setShowExpenseForm(false);
+  }
+
+  async function saveExpense(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    setNotice('');
+
+    try {
+      const payload = {
+        user_id: user.id,
+        expense_date: expenseForm.expense_date,
+        category: expenseForm.category,
+        amount: number(expenseForm.amount),
+        odometer_km: expenseForm.odometer_km
+          ? Number(expenseForm.odometer_km)
+          : null,
+        next_service_km: expenseForm.next_service_km
+          ? Number(expenseForm.next_service_km)
+          : null,
+        description: expenseForm.description.trim()
+      };
+
+      const result = editingExpense
+        ? await supabase
+            .from('motorcycle_expenses')
+            .update(payload)
+            .eq('id', editingExpense)
+            .eq('user_id', user.id)
+        : await supabase
+            .from('motorcycle_expenses')
+            .insert(payload);
+
+      if (result.error) throw result.error;
+
+      setNotice(editingExpense ? 'هزینه ویرایش شد.' : 'هزینه ثبت شد.');
+      resetExpenseForm();
+      await loadData();
+    } catch (err) {
+      setError(err.message || 'ذخیرهٔ هزینه انجام نشد.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteExpense(expense) {
+    if (!window.confirm('این هزینه حذف بشه؟')) return;
+
+    const { error: deleteError } = await supabase
+      .from('motorcycle_expenses')
+      .delete()
+      .eq('id', expense.id)
+      .eq('user_id', user.id);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+
+    setNotice('هزینه حذف شد.');
+    await loadData();
+  }
+
+  async function saveSettlement(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    setNotice('');
+
+    try {
+      const payload = {
+        user_id: user.id,
+        period_start: settlementForm.period_start,
+        period_end: settlementForm.period_end,
+        office_transfer_received: number(
+          settlementForm.office_transfer_received
+        ),
+        cash_handed_over: number(settlementForm.cash_handed_over),
+        commission_paid: number(settlementForm.commission_paid),
+        notes: settlementForm.notes.trim()
+      };
+
+      const { error: insertError } = await supabase
+        .from('settlements')
+        .insert(payload);
+
+      if (insertError) throw insertError;
+
+      setNotice('تسویه ثبت شد.');
+      setSettlementForm(emptySettlement());
+      setShowSettlementForm(false);
+      await loadData();
+    } catch (err) {
+      setError(err.message || 'ثبت تسویه انجام نشد.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function exportOrders() {
+    csvDownload('courier-orders.csv', [[
+      'شماره سفارش', 'تاریخ', 'ساعت', 'کرایه',
+      'فاکتور', 'نقد دریافتی', 'کارت به کارت',
+      'پوز دفتر', 'خرید شخصی', 'پول خرد مشتری',
+      'هزینه دیگر', 'وضعیت', 'یادداشت'
+    ], ...orders.map((order) => [
+      order.order_number, order.order_date, order.order_time,
+      order.fare, order.invoice_amount, order.cash_received,
+      order.card_transfer, order.office_pos,
+      order.personal_purchase, order.customer_change,
+      order.other_expense, order.status, order.notes
+    ])]);
+  }
+
+  function exportExpenses() {
+    csvDownload('motorcycle-expenses.csv', [[
+      'تاریخ', 'دسته', 'مبلغ', 'کیلومتر',
+      'کیلومتر سرویس بعدی', 'شرح'
+    ], ...expenses.map((expense) => [
+      expense.expense_date,
+      expenseCategories[expense.category] || expense.category,
+      expense.amount, expense.odometer_km,
+      expense.next_service_km, expense.description
+    ])]);
+  }
+
+  const latestOdometer = expenses
+    .filter((item) => item.odometer_km != null)
+    .reduce((max, item) => Math.max(max, Number(item.odometer_km)), 0);
+
+  const upcomingService = expenses
+    .filter((item) => item.next_service_km != null)
+    .sort((a, b) => Number(a.next_service_km) - Number(b.next_service_km))[0];
+
+  const nav = [
+    ['overview', 'نمای کلی', '▦'],
+    ['orders', 'سفارش‌ها', '▤'],
+    ['motorcycle', 'هزینهٔ موتور', '◉'],
+    ['settlements', 'تسویه‌ها', '⇄'],
+    ['reports', 'گزارش‌ها', '▥']
+  ];
 
   return (
     <main className="dashboard">
       <header className="topbar">
-        <div>
-          <h1>Courier Ledger</h1>
-          <p>سلام، {user.email}</p>
+        <div className="brand">
+          <div className="brand-mark">CL</div>
+          <div>
+            <strong>Courier Ledger</strong>
+            <small>دفتر حساب پیک موتوری</small>
+          </div>
         </div>
-        <button className="logout" onClick={onSignOut}>خروج</button>
+
+        <div className="user-tools">
+          <span className="user-email">{user.email}</span>
+          <button className="ghost-button" onClick={onSignOut}>
+            خروج
+          </button>
+        </div>
       </header>
 
-      <section className="stats">
-        <div className="stat">
-          <span>تعداد سفارش‌ها</span>
-          <strong>{money(orders.length)}</strong>
-        </div>
-        <div className="stat">
-          <span>مجموع کرایه‌ها</span>
-          <strong>{money(totalFare)}</strong>
-          <small>تومان</small>
-        </div>
-        <div className="stat">
-          <span>نقد دریافتی</span>
-          <strong>{money(totalCash)}</strong>
-          <small>تومان</small>
-        </div>
-        <div className="stat">
-          <span>واریز مستقیم</span>
-          <strong>{money(totalCard)}</strong>
-          <small>تومان</small>
-        </div>
-        <div className="stat">
-          <span>هزینه‌های ثبت‌شده</span>
-          <strong>{money(totalExpenses)}</strong>
-          <small>تومان</small>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>{editingId ? 'ویرایش سفارش' : 'ثبت سفارش جدید'}</h2>
-
-        <form className="order-form" onSubmit={saveOrder}>
-          {fields.map(([name, label, type, required]) => (
-            <label key={name}>
-              {label}
-              <input
-                name={name}
-                type={type}
-                value={form[name]}
-                onChange={updateField}
-                required={Boolean(required)}
-                min={type === 'number' ? 0 : undefined}
-                step={type === 'number' ? 1 : undefined}
-              />
-            </label>
-          ))}
-
-          <label className="full-width">
-            توضیحات
-            <textarea
-              name="notes"
-              value={form.notes}
-              onChange={updateField}
-              rows="3"
-            />
-          </label>
-
-          <div className="form-actions full-width">
-            <button type="submit" disabled={saving}>
-              {saving ? 'در حال ذخیره...' : editingId ? 'ذخیرهٔ تغییرات' : 'ثبت سفارش'}
-            </button>
-            {editingId && (
-              <button type="button" className="secondary" onClick={resetForm}>
-                انصراف از ویرایش
-              </button>
-            )}
-          </div>
-        </form>
-
-        {message && <div className="message">{message}</div>}
-      </section>
-
-      <section className="panel">
-        <div className="list-heading">
-          <h2>سفارش‌ها</h2>
-          <button className="secondary refresh" onClick={loadOrders}>تازه‌سازی</button>
-        </div>
-
-        <div className="filters">
-          <label>
-            جست‌وجو با شماره سفارش
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="شماره سفارش..."
-            />
-          </label>
-          <label>
-            فیلتر تاریخ
-            <input
-              type="date"
-              value={date}
-              onChange={(event) => setDate(event.target.value)}
-            />
-          </label>
+      <nav className="tabbar" aria-label="بخش‌های برنامه">
+        {nav.map(([id, label, icon]) => (
           <button
-            className="secondary clear-filter"
-            onClick={() => { setDate(''); setSearch('') }}
+            key={id}
+            className={`tab-button ${tab === id ? 'active' : ''}`}
+            onClick={() => setTab(id)}
           >
-            پاک‌کردن فیلترها
+            <span>{icon}</span>{label}
+          </button>
+        ))}
+      </nav>
+
+      <section className="page-content">
+        <div className="page-heading">
+          <div>
+            <p className="eyebrow">COURIER WORKSPACE</p>
+            <h1>{nav.find(([id]) => id === tab)?.[1]}</h1>
+            <p className="muted">اطلاعات مالی و کاری خودت رو مدیریت کن.</p>
+          </div>
+          <button className="ghost-button" onClick={loadData}>
+            ↻ تازه‌سازی
           </button>
         </div>
 
-        {loading ? (
-          <p>در حال دریافت سفارش‌ها...</p>
-        ) : orders.length === 0 ? (
-          <p className="empty">هنوز سفارشی برای نمایش وجود ندارد.</p>
-        ) : (
-          <div className="orders-list">
-            {orders.map((order) => (
-              <article className="order-card" key={order.id}>
-                <div className="order-title">
-                  <strong>سفارش {order.order_number}</strong>
-                  <span>{order.order_date} {order.order_time?.slice(0, 5)}</span>
-                </div>
-                <div className="order-details">
-                  <span>کرایه: <b>{money(order.fare)}</b> تومان</span>
-                  <span>فاکتور: {money(order.invoice_amount)} تومان</span>
-                  <span>نقد دریافتی: {money(order.cash_received)} تومان</span>
-                  <span>واریز مستقیم: {money(order.card_transfer)} تومان</span>
-                  <span>کارت‌خوان دفتر: {money(order.office_pos)} تومان</span>
-                </div>
-                {order.notes && <p className="notes">{order.notes}</p>}
-                <div className="order-actions">
-                  <button className="secondary" onClick={() => editOrder(order)}>ویرایش</button>
-                  <button className="danger" onClick={() => deleteOrder(order)}>حذف</button>
-                </div>
-              </article>
-            ))}
-          </div>
+        {error && <div className="alert error" role="alert">{error}</div>}
+        {notice && <div className="alert success" role="status">{notice}</div>}
+
+        {loading && (
+          <div className="panel loading-panel">در حال دریافت اطلاعات...</div>
         )}
-      </section>
-    </main>
-  )
-}
+
+        {!loading && tab === 'overview' && (
+          <>
+            <div className="filter-row panel">
+              <label>
+                از تاریخ
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                />
+              </label>
+              <label>
+                تا تاریخ
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                />
+              </label>
+            </div>
+
+            <div className="stats-grid">
+              <Stat label="تعداد سفارش" value={money(stats.count)} />
+              <Stat label="مجموع فاکتور مغازه" value={money(stats.invoices)} />
+              <Stat label="مجموع کرایه" value={money(stats.fare)} featured />
+              <Stat label="کمیسیون تخمینی ۲۰٪" value={money(stats.commission)} />
+              <Stat label="دریافتی نقدی ثبت‌شده" value={money(stats.cash)} />
+              <Stat label="کارت‌به‌کارت ثبت‌شده" value={money(stats.card)} />
+              <Stat label="پوز دفتر ثبت‌شده" value={money(stats.pos)} />
+              <Stat label="هزینه‌های موتور" value={money(stats.motorcycleCosts)} />
+              <Stat
+                label="خالص تخمینی"
+                value={money(stats.estimatedNet)}
+                featured
+              />
+            </div>
+
+            <p className="muted footnote">
+              همهٔ مبالغ به واحد پولی‌ای هستند که هنگام ثبت استفاده می‌کنی.
+              خالص تخمینی = کرایه − کمیسیون تخمینی − هزینه‌های موتور.
+              این عدد سود قطعی یا مبلغ تسویهٔ دفتر نیست.
+            </p>
+
+            <section className="panel">
+              <div className="section-heading">
+                <h2>آخرین سفارش‌ها</h2>
+                <button
+                  className="primary-button small"
+                  onClick={() => {
+                    resetOrderForm();
+                    setShowOrderForm(true);
+                    setTab('orders');
+                  }}
+                >
+                  + سفارش جدید
+                </button>
+              </div>
+              <OrderTable
+                orders={filteredOrders.slice(0, 5)}
+                onEdit={startEditOrder}
+                onDelete={deleteOrder}
+              />
+            </section>
+          </>
+        )}
+
+        {!loading && tab === 'orders' && (
+          <>
+            <div className="toolbar panel">
+              <input
+                aria-label="جست‌وجوی سفارش"
+                placeholder="جست‌وجوی شماره سفارش یا یادداشت..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <button
+                className="primary-button"
+                onClick={() => {
+                  resetOrderForm();
+                  setShowOrderForm(!showOrderForm);
+                }}
+              >
+                + ثبت سفارش
+              </button>
+              <button className="ghost-button" onClick={exportOrders}>
+                خروجی CSV
+              </button>
+            </div>
+
+            <div className="filter-row panel">
+              <label>
+                از تاریخ
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                />
+              </label>
+              <label>
+                تا تاریخ
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                />
+              </label>
+            </div>
+
+            {showOrderForm && (
+              <form className="panel data-form" onSubmit={saveOrder}>
+                <div className="section-heading">
+                  <h2>{editingOrder ? 'ویرایش سفارش' : 'سفارش جدید'}</h2>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={resetOrderForm}
+                  >
+                    بستن
+                  </button>
+                </div>
+
+                <div className="form-grid">
+                  <Field label="شماره سفارش">
+                    <input
+                      value={orderForm.order_number}
+                      onChange={(e) => setOrderForm({
+                        ...orderForm, order_number: e.target.value
+                      })}
+                      required
+                    />
+                  </Field>
+                  <Field label="تاریخ">
+                    <input
+                      type="date"
+                      value={orderForm.order_date}
+                      onChange={(e) => setOrderForm({
+                        ...orderForm, order_date: e.target.value
+                      })}
+                      required
+                    />
+                  </Field>
+                  <Field label="ساعت">
+                    <input
+                      type="time"
+                      value={orderForm.order_time || ''}
+                      onChange={(e) => setOrderForm({
+                        ...orderForm, order_time: e.target.value
+                      })}
+                    />
+                  </Field>
+                  <Field label="کرایهٔ پیک">
+                    <input
+                      type="number" min="0" step="1"
+                      value={orderForm.fare}
+                      onChange={(e) => setOrderForm({
+                        ...orderFo

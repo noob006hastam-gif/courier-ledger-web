@@ -869,7 +869,7 @@ export default function Dashboard({ user, onSignOut }) {
                   </Field>
                   <Field label="کیلومتر فعلی (اختیاری)">
                     <input
-                      type"number" min="0" step="1"
+                      type="number" min="0" step="1"
                       value={expenseForm.amount}
                       onChange={(e) => setExpenseForm({
                         ...expenseForm, amount: e.target.value
